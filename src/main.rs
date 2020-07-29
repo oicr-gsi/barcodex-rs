@@ -498,14 +498,14 @@ fn main() {
     std::process::exit(match data.as_str() {
         "single" => {
             if !read3.is_empty() {
-                eprint!("Single ended data requested but R3 files provided.");
+                eprintln!("Single ended data requested but R3 files provided.");
                 1
             } else if inline {
                 if !read2.is_empty() {
-                    eprint!("Single ended data requested but R2 files provided.");
+                    eprintln!("Single ended data requested but R2 files provided.");
                     1
                 } else if pattern2 != None {
-                    eprint!("Single ended data requested but pattern2 provided.");
+                    eprintln!("Single ended data requested but pattern2 provided.");
                     1
                 } else {
                     let pattern = InlineHandler::parse(
@@ -529,10 +529,10 @@ fn main() {
                     0
                 }
             } else if read1.len() != read2.len() {
-                eprint!("Mismatched file counts for R1 and R2.");
+                eprintln!("Mismatched file counts for R1 and R2.");
                 1
             } else if pattern1 != None || pattern2 != None {
-                eprint!("Patterns are provided for non-inline UMI.");
+                eprintln!("Patterns are provided for non-inline UMI.");
                 1
             } else {
                 for (r1, r2) in read1.iter().zip(read2.iter()) {
@@ -554,10 +554,10 @@ fn main() {
         "paired" => {
             if inline {
                 if !read3.is_empty() {
-                    eprint!("Paired end inline data requested but R3 files provided.");
+                    eprintln!("Paired end inline data requested but R3 files provided.");
                     1
                 } else if read1.len() != read2.len() {
-                    eprint!("Mismatched file counts for R1 and R2.");
+                    eprintln!("Mismatched file counts for R1 and R2.");
                     1
                 } else {
                     let p1 = InlineHandler::parse(
@@ -586,10 +586,10 @@ fn main() {
                     0
                 }
             } else if read1.len() != read2.len() && read1.len() != read3.len() {
-                eprint!("Mismatched file counts for R1, R2, and R3.");
+                eprintln!("Mismatched file counts for R1, R2, and R3.");
                 1
             } else if pattern1 != None || pattern2 != None {
-                eprint!("Patterns are provided for non-inline UMI.");
+                eprintln!("Patterns are provided for non-inline UMI.");
                 1
             } else {
                 for ((r1, r2), r3) in read1.iter().zip(read2.iter()).zip(read3.iter()) {
@@ -610,7 +610,7 @@ fn main() {
             }
         }
         _ => {
-            eprint!(
+            eprintln!(
                 "Unknown option for --data: {} should be single or pairied",
                 data
             );
