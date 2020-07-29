@@ -91,7 +91,12 @@ impl InlineHandler {
             // Process the read through the regular expression, anything in the `umi` capture groups becomes UMI, everything in `discard` is written to the discard file, and everything else is extracted sequence
             InlineHandler::Regex(regex, full_match) => match regex.captures(read.seq()) {
                 Some(result) => {
-                    if *full_match && result.get(0).unwrap().end() < read.seq().len() {
+                    if result
+                        .iter()
+                        .skip(1)
+                        .all(|m| m.map(|mat| mat.as_bytes().len() == 0).unwrap_or(true))
+                        || *full_match && result.get(0).unwrap().end() < read.seq().len()
+                    {
                         Output::Discard(read)
                     } else {
                         let umi_indices = indices_from_regex(regex, &result, "umi");
@@ -213,7 +218,7 @@ impl Output {
     /// Panics if there was no input
     fn read<'a>(self: &'a Self) -> &'a bio::io::fastq::Record {
         match self {
-            Output::Empty => panic!("Trying to get c of empty record."),
+            Output::Empty => panic!("Trying to get seqeuence of empty record."),
             Output::Discard(record) => record,
             Output::Valid {
                 input,
