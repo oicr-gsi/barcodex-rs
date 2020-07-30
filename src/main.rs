@@ -63,7 +63,7 @@ enum Output {
 type OutputFileWriter = flate2::write::GzEncoder<std::fs::File>;
 /// Holder for FASTQ files that are being written to per read
 struct OutputReadHandler {
-    main_file: bio::io::fastq::Writer<OutputFileWriter>,
+    main_file: Option<bio::io::fastq::Writer<OutputFileWriter>>,
     extracted_file: bio::io::fastq::Writer<OutputFileWriter>,
     discard_file: bio::io::fastq::Writer<OutputFileWriter>,
 }
@@ -186,7 +186,7 @@ where
                     Output::Valid {
                         umi: read.seq().into(),
                         main: (vec![], vec![]),
-                        extracted: (vec![], vec![]),
+                        extracted: (read.seq().into(), read.qual().into()),
                         input: read,
                     }
                 }
@@ -200,9 +200,13 @@ impl OutputReadHandler {
         self.discard_file.write_record(read).unwrap()
     }
     /// Create a new output handler that writes to the main, discard, and extracted FASTQs
-    fn new(prefix: &Option<String>, read: usize) -> OutputReadHandler {
+    fn new(prefix: &Option<String>, read: usize, has_main: bool) -> OutputReadHandler {
         OutputReadHandler {
-            main_file: write_fastq(prefix, read, ""),
+            main_file: if has_main {
+                Some(write_fastq(prefix, read, ""))
+            } else {
+                None
+            },
             extracted_file: write_fastq(prefix, read, ".extracted"),
             discard_file: write_fastq(prefix, read, ".discarded"),
         }
@@ -215,9 +219,11 @@ impl OutputReadHandler {
         main: &ScoredSequence,
         extracted: &ScoredSequence,
     ) -> () {
-        self.main_file
-            .write(std::str::from_utf8(header).unwrap(), desc, &main.0, &main.1)
-            .unwrap();
+        if let Some(main_file) = self.main_file.as_mut() {
+            main_file
+                .write(std::str::from_utf8(header).unwrap(), desc, &main.0, &main.1)
+                .unwrap();
+        }
         self.extracted_file
             .write(
                 std::str::from_utf8(header).unwrap(),
@@ -531,7 +537,7 @@ fn main() {
                                 read_fastq(&r1).records(),
                                 &pattern,
                             )],
-                            &mut [OutputReadHandler::new(&prefix, 1)],
+                            &mut [OutputReadHandler::new(&prefix, 1, true)],
                             &separator,
                             &mut metrics,
                             &mut counts,
@@ -553,7 +559,10 @@ fn main() {
                             InputReadHandler::SequenceOnly(read_fastq(&r1).records()),
                             InputReadHandler::UmiOnly(read_fastq(&r2).records()),
                         ],
-                        &mut [OutputReadHandler::new(&prefix, 1)],
+                        &mut [
+                            OutputReadHandler::new(&prefix, 1, true),
+                            OutputReadHandler::new(&prefix, 2, false),
+                        ],
                         &separator,
                         &mut metrics,
                         &mut counts,
@@ -589,8 +598,8 @@ fn main() {
                                 InputReadHandler::Inline(read_fastq(&r2).records(), &p2),
                             ],
                             &mut [
-                                OutputReadHandler::new(&prefix, 1),
-                                OutputReadHandler::new(&prefix, 2),
+                                OutputReadHandler::new(&prefix, 1, true),
+                                OutputReadHandler::new(&prefix, 2, true),
                             ],
                             &separator,
                             &mut metrics,
@@ -615,8 +624,9 @@ fn main() {
                             InputReadHandler::UmiOnly(read_fastq(&r3).records()),
                         ],
                         &mut [
-                            OutputReadHandler::new(&prefix, 1),
-                            OutputReadHandler::new(&prefix, 2),
+                            OutputReadHandler::new(&prefix, 1, true),
+                            OutputReadHandler::new(&prefix, 2, true),
+                            OutputReadHandler::new(&prefix, 3, false),
                         ],
                         &separator,
                         &mut metrics,
