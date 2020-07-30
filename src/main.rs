@@ -62,13 +62,10 @@ enum Output {
 /// Type alias for the output file handler mess
 type OutputFileWriter = flate2::write::GzEncoder<std::fs::File>;
 /// Holder for FASTQ files that are being written to per read
-struct OutputReadHandler<W>
-where
-    W: std::io::Write,
-{
-    main_file: bio::io::fastq::Writer<W>,
-    extracted_file: bio::io::fastq::Writer<W>,
-    discard_file: bio::io::fastq::Writer<W>,
+struct OutputReadHandler {
+    main_file: bio::io::fastq::Writer<OutputFileWriter>,
+    extracted_file: bio::io::fastq::Writer<OutputFileWriter>,
+    discard_file: bio::io::fastq::Writer<OutputFileWriter>,
 }
 impl InlineHandler {
     /// Generates output from an input sequence that will be processed in an appropriate way for the inline extraction method
@@ -197,13 +194,18 @@ where
         }
     }
 }
-impl<W> OutputReadHandler<W>
-where
-    W: std::io::Write,
-{
+impl OutputReadHandler {
     /// Write this whole read to the discard file
     fn discard(self: &mut Self, read: &bio::io::fastq::Record) -> () {
         self.discard_file.write_record(read).unwrap()
+    }
+    /// Create a new output handler that writes to the main, discard, and extracted FASTQs
+    fn new(prefix: &Option<String>, read: usize) -> OutputReadHandler {
+        OutputReadHandler {
+            main_file: write_fastq(prefix, read, ""),
+            extracted_file: write_fastq(prefix, read, ".extracted"),
+            discard_file: write_fastq(prefix, read, ".discarded"),
+        }
     }
     /// Write this processed read to the main and extracted output files
     fn write(
@@ -251,16 +253,15 @@ impl Output {
     }
 }
 /// Take a bunch of input files and process all the reads
-fn extract_barcodes<R, W>(
+fn extract_barcodes<R>(
     inputs: &mut [InputReadHandler<R>],
-    outputs: &mut [OutputReadHandler<W>],
+    outputs: &mut [OutputReadHandler],
     separator: &str,
     metrics: &mut ExtractionMetrics,
     counts: &mut std::collections::HashMap<String, usize>,
 ) -> ()
 where
     R: std::io::Read,
-    W: std::io::Write,
 {
     loop {
         // For every input file, try to extract a read and process it
@@ -361,15 +362,6 @@ fn indices_from_regex(
         .collect();
     indices.sort();
     indices
-}
-
-/// Create a new output handler that writes to the main, discard, and extracted FASTQs
-fn new_output(prefix: &Option<String>, read: usize) -> OutputReadHandler<OutputFileWriter> {
-    OutputReadHandler {
-        main_file: write_fastq(prefix, read, ""),
-        extracted_file: write_fastq(prefix, read, ".extracted"),
-        discard_file: write_fastq(prefix, read, ".discarded"),
-    }
 }
 
 /// Read a gzipped FASTQ
@@ -539,7 +531,7 @@ fn main() {
                                 read_fastq(&r1).records(),
                                 &pattern,
                             )],
-                            &mut [new_output(&prefix, 1)],
+                            &mut [OutputReadHandler::new(&prefix, 1)],
                             &separator,
                             &mut metrics,
                             &mut counts,
@@ -561,7 +553,7 @@ fn main() {
                             InputReadHandler::SequenceOnly(read_fastq(&r1).records()),
                             InputReadHandler::UmiOnly(read_fastq(&r2).records()),
                         ],
-                        &mut [new_output(&prefix, 1)],
+                        &mut [OutputReadHandler::new(&prefix, 1)],
                         &separator,
                         &mut metrics,
                         &mut counts,
@@ -596,7 +588,10 @@ fn main() {
                                 InputReadHandler::Inline(read_fastq(&r1).records(), &p1),
                                 InputReadHandler::Inline(read_fastq(&r2).records(), &p2),
                             ],
-                            &mut [new_output(&prefix, 1), new_output(&prefix, 2)],
+                            &mut [
+                                OutputReadHandler::new(&prefix, 1),
+                                OutputReadHandler::new(&prefix, 2),
+                            ],
                             &separator,
                             &mut metrics,
                             &mut counts,
@@ -619,7 +614,10 @@ fn main() {
                             InputReadHandler::SequenceOnly(read_fastq(&r2).records()),
                             InputReadHandler::UmiOnly(read_fastq(&r3).records()),
                         ],
-                        &mut [new_output(&prefix, 1), new_output(&prefix, 2)],
+                        &mut [
+                            OutputReadHandler::new(&prefix, 1),
+                            OutputReadHandler::new(&prefix, 2),
+                        ],
                         &separator,
                         &mut metrics,
                         &mut counts,
