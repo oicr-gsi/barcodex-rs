@@ -306,17 +306,19 @@ where
             // Combine all the bits of UMI we have found across all the reads and combine them
             let umi: Vec<u8> = reads
                 .iter()
-                .flat_map(|o| match o {
+                .map(|o| match o {
                     Output::Valid {
                         umi,
                         extracted: _,
                         main: _,
                         input: _,
-                    } => umi.into_iter(),
+                    } => umi.as_slice(),
                     _ => panic!("Unexpected invalid record"),
                 })
-                .map(|v| *v)
-                .collect();
+                .filter(|u| u.len() > 0)
+                .collect::<Vec<&[u8]>>()
+                .join(&('-' as u8))
+                .into();
             let umi_str: String = std::str::from_utf8(&umi).unwrap().into();
             // If our counts hashmap has this UMI, then increment it and output the modified read
             match counts.get_mut(&umi_str) {
