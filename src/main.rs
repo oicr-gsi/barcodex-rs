@@ -30,13 +30,16 @@ enum InlineHandler {
     Regex(regex::bytes::Regex, bool),
 }
 // The kind of input files we can handle
-enum InputReadHandler<'a> {
+enum InputReadHandler<'a, R>
+where
+    R: std::io::Read,
+{
     // This file contributes sequence and UMI
-    Inline(&'a InlineHandler),
+    Inline(bio::io::fastq::Records<R>, &'a InlineHandler),
     // This file contributes only sequence information
-    SequenceOnly,
+    SequenceOnly(bio::io::fastq::Records<R>),
     // This file contributes only UMI information
-    UmiOnly,
+    UmiOnly(bio::io::fastq::Records<R>),
 }
 /// A pair of FASTQ nucleotides and their corresponding scores
 type ScoredSequence = (Vec<u8>, Vec<u8>);
@@ -153,25 +156,43 @@ impl InlineHandler {
     }
 }
 
-impl<'a> InputReadHandler<'a> {
+impl<'a, R> InputReadHandler<'a, R>
+where
+    R: std::io::Read,
+{
     /// Process a read for UMI content in a way that is appropriate for this file type
-    fn process(self: &mut Self, read: bio::io::fastq::Record) -> Output {
+    fn next(self: &mut Self) -> Output {
         match self {
             // Extract both UMI and sequence
-            InputReadHandler::Inline(handler) => handler.extract(read),
+            InputReadHandler::Inline(reader, handler) => match reader.next() {
+                None => Output::Empty,
+                Some(record) => handler.extract(record.unwrap()),
+            },
             // Dump everything into extracted sequence
-            InputReadHandler::SequenceOnly => Output::Valid {
-                umi: vec![],
-                main: (read.seq().into(), read.qual().into()),
-                extracted: (vec![], vec![]),
-                input: read,
+            InputReadHandler::SequenceOnly(reader) => match reader.next() {
+                None => Output::Empty,
+                Some(record) => {
+                    let read = record.unwrap();
+                    Output::Valid {
+                        umi: vec![],
+                        main: (read.seq().into(), read.qual().into()),
+                        extracted: (vec![], vec![]),
+                        input: read,
+                    }
+                }
             },
             // Dump everything into UMI
-            InputReadHandler::UmiOnly => Output::Valid {
-                umi: read.seq().into(),
-                main: (vec![], vec![]),
-                extracted: (vec![], vec![]),
-                input: read,
+            InputReadHandler::UmiOnly(reader) => match reader.next() {
+                None => Output::Empty,
+                Some(record) => {
+                    let read = record.unwrap();
+                    Output::Valid {
+                        umi: read.seq().into(),
+                        main: (vec![], vec![]),
+                        extracted: (vec![], vec![]),
+                        input: read,
+                    }
+                }
             },
         }
     }
@@ -231,7 +252,7 @@ impl Output {
 }
 /// Take a bunch of input files and process all the reads
 fn extract_barcodes<R, W>(
-    inputs: &mut [(bio::io::fastq::Records<R>, InputReadHandler)],
+    inputs: &mut [InputReadHandler<R>],
     outputs: &mut [OutputReadHandler<W>],
     separator: &str,
     metrics: &mut ExtractionMetrics,
@@ -243,13 +264,7 @@ where
 {
     loop {
         // For every input file, try to extract a read and process it
-        let reads: Vec<Output> = inputs
-            .iter_mut()
-            .map(|(reader, handler)| match reader.next() {
-                None => Output::Empty,
-                Some(record) => handler.process(record.unwrap()),
-            })
-            .collect();
+        let reads: Vec<Output> = inputs.iter_mut().map(|handler| handler.next()).collect();
         // See how many files are out of reads
         let empty_files = reads
             .iter()
@@ -520,9 +535,9 @@ fn main() {
                     .expect("Valid pattern1 is required");
                     for r1 in read1 {
                         extract_barcodes(
-                            &mut [(
+                            &mut [InputReadHandler::Inline(
                                 read_fastq(&r1).records(),
-                                InputReadHandler::Inline(&pattern),
+                                &pattern,
                             )],
                             &mut [new_output(&prefix, 1)],
                             &separator,
@@ -543,8 +558,8 @@ fn main() {
                 for (r1, r2) in read1.iter().zip(read2.iter()) {
                     extract_barcodes(
                         &mut [
-                            (read_fastq(&r1).records(), InputReadHandler::SequenceOnly),
-                            (read_fastq(&r2).records(), InputReadHandler::UmiOnly),
+                            InputReadHandler::SequenceOnly(read_fastq(&r1).records()),
+                            InputReadHandler::UmiOnly(read_fastq(&r2).records()),
                         ],
                         &mut [new_output(&prefix, 1)],
                         &separator,
@@ -578,8 +593,8 @@ fn main() {
                     for (r1, r2) in read1.iter().zip(read2.iter()) {
                         extract_barcodes(
                             &mut [
-                                (read_fastq(&r1).records(), InputReadHandler::Inline(&p1)),
-                                (read_fastq(&r2).records(), InputReadHandler::Inline(&p2)),
+                                InputReadHandler::Inline(read_fastq(&r1).records(), &p1),
+                                InputReadHandler::Inline(read_fastq(&r2).records(), &p2),
                             ],
                             &mut [new_output(&prefix, 1), new_output(&prefix, 2)],
                             &separator,
@@ -600,9 +615,9 @@ fn main() {
                 for ((r1, r2), r3) in read1.iter().zip(read2.iter()).zip(read3.iter()) {
                     extract_barcodes(
                         &mut [
-                            (read_fastq(&r1).records(), InputReadHandler::SequenceOnly),
-                            (read_fastq(&r2).records(), InputReadHandler::SequenceOnly),
-                            (read_fastq(&r3).records(), InputReadHandler::UmiOnly),
+                            InputReadHandler::SequenceOnly(read_fastq(&r1).records()),
+                            InputReadHandler::SequenceOnly(read_fastq(&r2).records()),
+                            InputReadHandler::UmiOnly(read_fastq(&r3).records()),
                         ],
                         &mut [new_output(&prefix, 1), new_output(&prefix, 2)],
                         &separator,
