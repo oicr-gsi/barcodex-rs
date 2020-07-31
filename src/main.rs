@@ -108,7 +108,7 @@ impl InlineHandler {
                     if result
                         .iter()
                         .skip(1)
-                        .all(|m| m.map(|mat| mat.as_bytes().len() == 0).unwrap_or(true))
+                        .all(|m| m.map(|mat| mat.as_bytes().is_empty()).unwrap_or(true))
                         || *full_match && result.get(0).unwrap().end() < read.seq().len()
                     {
                         Output::Discard(read)
@@ -126,18 +126,18 @@ impl InlineHandler {
                                 extracted_indices
                                     .iter()
                                     .flat_map(|&i| read.seq().get(i))
-                                    .map(|&v| v)
+                                    .copied()
                                     .collect(),
                                 extracted_indices
                                     .iter()
                                     .flat_map(|&i| read.qual().get(i))
-                                    .map(|&v| v)
+                                    .copied()
                                     .collect(),
                             ),
                             umi: umi_indices
                                 .iter()
                                 .flat_map(|&i| read.seq().get(i))
-                                .map(|&v| v)
+                                .copied()
                                 .collect(),
                             input: read,
                         }
@@ -173,8 +173,8 @@ impl InlineHandler {
                     })
                     .map(|(index, _)| index)
                     .collect(),
-                regex: regex,
-                full_match: full_match,
+                regex,
+                full_match,
             })
         }
     }
@@ -223,7 +223,7 @@ where
 }
 impl OutputReadHandler {
     /// Write this whole read to the discard file
-    fn discard(self: &mut Self, read: &bio::io::fastq::Record) -> () {
+    fn discard(self: &mut Self, read: &bio::io::fastq::Record) {
         self.discard_file.write_record(read).unwrap()
     }
     /// Create a new output handler that writes to the main, discard, and extracted FASTQs
@@ -245,7 +245,7 @@ impl OutputReadHandler {
         desc: Option<&str>,
         main: &ScoredSequence,
         extracted: &ScoredSequence,
-    ) -> () {
+    ) {
         if let Some(main_file) = self.main_file.as_mut() {
             main_file
                 .write(std::str::from_utf8(header).unwrap(), desc, &main.0, &main.1)
@@ -266,13 +266,13 @@ impl Output {
     /// Get the name of the input sequence associated which generated this output.
     ///
     /// Panics if there was no input
-    fn name<'a>(self: &'a Self) -> &'a [u8] {
+    fn name(self: &Self) -> &[u8] {
         self.read().name()
     }
     /// Get the input sequence associated which generated this output.
     ///
     /// Panics if there was no input
-    fn read<'a>(self: &'a Self) -> &'a bio::io::fastq::Record {
+    fn read(self: &Self) -> &bio::io::fastq::Record {
         match self {
             Output::Empty => panic!("Trying to get seqeuence of empty record."),
             Output::Discard(record) => record,
@@ -292,8 +292,7 @@ fn extract_barcodes<R>(
     separator: &str,
     metrics: &mut ExtractionMetrics,
     counts: &mut std::collections::HashMap<String, usize>,
-) -> ()
-where
+) where
     R: std::io::Read,
 {
     loop {
@@ -324,9 +323,8 @@ where
         }) {
             metrics.discards += 1;
             for (index, output) in outputs.iter_mut().enumerate() {
-                match reads.get(index) {
-                    Some(o) => output.discard(o.read()),
-                    None => (),
+                if let Some(o) = reads.get(index) {
+                    output.discard(o.read());
                 }
             }
         } else {
@@ -342,10 +340,9 @@ where
                     } => umi.as_slice(),
                     _ => panic!("Unexpected invalid record"),
                 })
-                .filter(|u| u.len() > 0)
+                .filter(|u| !u.is_empty())
                 .collect::<Vec<&[u8]>>()
-                .join(&('-' as u8))
-                .into();
+                .join(&b'-');
             let umi_str: String = std::str::from_utf8(&umi).unwrap().into();
             // If our counts hashmap has this UMI, then increment it and output the modified read
             match counts.get_mut(&umi_str) {
@@ -354,14 +351,14 @@ where
                     metrics.matching += 1;
                     let header = &[&reads[0].name(), separator.as_bytes(), &umi].concat();
                     for (index, output) in outputs.iter_mut().enumerate() {
-                        match reads.get(index) {
-                            Some(Output::Valid {
-                                umi: _,
-                                extracted,
-                                main,
-                                input,
-                            }) => output.write(&header, input.desc(), main, extracted),
-                            _ => (),
+                        if let Some(Output::Valid {
+                            umi: _,
+                            extracted,
+                            main,
+                            input,
+                        }) = reads.get(index)
+                        {
+                            output.write(&header, input.desc(), main, extracted);
                         }
                     }
                 }
@@ -369,9 +366,8 @@ where
                 None => {
                     metrics.unknown_umi += 1;
                     for (index, output) in outputs.iter_mut().enumerate() {
-                        match reads.get(index) {
-                            Some(o) => output.discard(o.read()),
-                            None => (),
+                        if let Some(o) = reads.get(index) {
+                            output.discard(o.read());
                         }
                     }
                 }
@@ -384,7 +380,7 @@ fn indices_from_regex(result: &regex::bytes::Captures, target_captures: &[usize]
     let mut indices: Vec<usize> = target_captures
         .iter()
         .flat_map(|target| result.get(*target))
-        .flat_map(|r| r.range().into_iter())
+        .flat_map(|r| r.range())
         .collect();
     indices.sort();
     indices
@@ -423,7 +419,7 @@ fn write_stats(
     prefix: &str,
     metrics: &ExtractionMetrics,
     counts: &mut std::collections::HashMap<String, usize>,
-) -> () {
+) {
     // We populate the hash map with all allowed UMIs; drop any from the output that weren't found
     counts.retain(|_, &mut v| v > 0);
     serde_json::to_writer(
@@ -442,9 +438,9 @@ fn main() {
     let mut data: String = "single".into();
     let mut full_match = false;
     let mut inline = false;
-    let mut pattern1: Option<String> = None;
-    let mut pattern2: Option<String> = None;
-    let mut prefix: Option<String> = None;
+    let mut pattern1 = None;
+    let mut pattern2 = None;
+    let mut prefix = None;
     let mut read1: Vec<String> = vec![];
     let mut read2: Vec<String> = vec![];
     let mut read3: Vec<String> = vec![];
