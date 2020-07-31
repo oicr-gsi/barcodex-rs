@@ -453,7 +453,10 @@ struct Opts {
 }
 #[derive(Clap)]
 enum SubCommand {
-    #[clap(name = "inline")]
+    #[clap(
+        name = "inline",
+        about = "Extract UMIs where the UMI is mixed with the sequence."
+    )]
     Inline {
         #[clap(long, required = true, about = "Path to input FASTQ 1")]
         r1_in: Vec<String>,
@@ -469,7 +472,10 @@ enum SubCommand {
         )]
         full_match: bool,
     },
-    #[clap(name = "separate")]
+    #[clap(
+        name = "separate",
+        about = "Extract UMIs where the UMI is in a separate read."
+    )]
     Separate {
         #[clap(
             long,
