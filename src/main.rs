@@ -24,10 +24,19 @@ struct ExtractionMetrics<'a> {
 }
 /// The mechanism to process inline UMIs
 enum InlineHandler {
-    // Contributes sequence and UMI and uses a leading UMI followed by a fixed spacer sequence
+    /// Contributes sequence and UMI and uses a leading UMI followed by a fixed spacer sequence
     Nucleotide(usize, String),
-    // Contributes sequence and UMI information and extracts the UMI using a regex
-    Regex(regex::bytes::Regex, bool),
+    /// Contributes sequence and UMI information and extracts the UMI using a regex
+    Regex {
+        /// The regular expression we are capturing
+        regex: regex::bytes::Regex,
+        /// Whether the user requested a full match or not
+        full_match: bool,
+        /// The capture groups corresponding to UMI regions
+        umi_targets: Vec<usize>,
+        /// The capture groups corresponding to UMI or discard regions (since both get written to the extracted file)
+        extracted_targets: Vec<usize>,
+    },
 }
 // The kind of input files we can handle
 enum InputReadHandler<'a, R>
@@ -89,7 +98,12 @@ impl InlineHandler {
                 }
             }
             // Process the read through the regular expression, anything in the `umi` capture groups becomes UMI, everything in `discard` is written to the discard file, and everything else is extracted sequence
-            InlineHandler::Regex(regex, full_match) => match regex.captures(read.seq()) {
+            InlineHandler::Regex {
+                regex,
+                full_match,
+                umi_targets,
+                extracted_targets,
+            } => match regex.captures(read.seq()) {
                 Some(result) => {
                     if result
                         .iter()
@@ -99,26 +113,22 @@ impl InlineHandler {
                     {
                         Output::Discard(read)
                     } else {
-                        let umi_indices = indices_from_regex(regex, &result, "umi");
-                        let mut discard_indices = indices_from_regex(regex, &result, "discard");
-                        discard_indices.extend_from_slice(&umi_indices);
-                        discard_indices.sort();
+                        let umi_indices = indices_from_regex(&result, umi_targets);
+                        let extracted_indices = indices_from_regex(&result, extracted_targets);
                         Output::Valid {
                             main: (0..read.seq().len())
-                                .filter(|i| {
-                                    !umi_indices.contains(i) && !discard_indices.contains(i)
-                                })
+                                .filter(|i| extracted_indices.binary_search(i).is_err()) // Since the extracted region is a superset of the UMI, we don't need to search both
                                 .map(|i| {
                                     (*read.seq().get(i).unwrap(), *read.qual().get(i).unwrap())
                                 })
                                 .unzip(),
                             extracted: (
-                                discard_indices
+                                extracted_indices
                                     .iter()
                                     .flat_map(|&i| read.seq().get(i))
                                     .map(|&v| v)
                                     .collect(),
-                                discard_indices
+                                extracted_indices
                                     .iter()
                                     .flat_map(|&i| read.qual().get(i))
                                     .map(|&v| v)
@@ -145,10 +155,27 @@ impl InlineHandler {
                 captures.get(2)?.as_str().into(),
             ))
         } else {
-            Some(InlineHandler::Regex(
-                regex::bytes::Regex::new(pattern).unwrap(),
-                full_match,
-            ))
+            let regex = regex::bytes::Regex::new(pattern).unwrap();
+            Some(InlineHandler::Regex {
+                umi_targets: regex
+                    .capture_names()
+                    .enumerate()
+                    .filter(|(_, capture)| capture.map(|c| c.starts_with("umi")).unwrap_or(false))
+                    .map(|(index, _)| index)
+                    .collect(),
+                extracted_targets: regex
+                    .capture_names()
+                    .enumerate()
+                    .filter(|(_, capture)| {
+                        capture
+                            .map(|c| c.starts_with("umi") || c.starts_with("discard"))
+                            .unwrap_or(false)
+                    })
+                    .map(|(index, _)| index)
+                    .collect(),
+                regex: regex,
+                full_match: full_match,
+            })
         }
     }
 }
@@ -352,20 +379,11 @@ where
         }
     }
 }
-/// Create a list of indices of all the positions that were part of a regular expression capture group with a name matching the prefix provided
-fn indices_from_regex(
-    regex: &regex::bytes::Regex,
-    result: &regex::bytes::Captures,
-    prefix: &str,
-) -> Vec<usize> {
-    let mut indices: Vec<usize> = regex
-        .capture_names()
-        .filter(|name| {
-            name.map(|name_str| name_str.starts_with(prefix))
-                .unwrap_or(false)
-        })
-        .flatten()
-        .flat_map(|name| result.name(name))
+/// Create a list of indices of all the positions that were part of a regular expression capture group
+fn indices_from_regex(result: &regex::bytes::Captures, target_captures: &[usize]) -> Vec<usize> {
+    let mut indices: Vec<usize> = target_captures
+        .iter()
+        .flat_map(|target| result.get(*target))
         .flat_map(|r| r.range().into_iter())
         .collect();
     indices.sort();
