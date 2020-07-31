@@ -1,4 +1,5 @@
 use bio_types::sequence::SequenceRead;
+use clap::Clap;
 use std::io::BufRead;
 
 lazy_static::lazy_static! {
@@ -19,8 +20,8 @@ struct ExtractionMetrics<'a> {
     unknown_umi: usize,
     #[serde(rename = "umi-list file")]
     acceptable_umi_list: &'a str,
-    pattern1: &'a Option<String>,
-    pattern2: &'a Option<String>,
+    pattern1: Option<&'a str>,
+    pattern2: Option<&'a str>,
 }
 /// The mechanism to process inline UMIs
 enum InlineHandler {
@@ -105,6 +106,7 @@ impl InlineHandler {
                 extracted_targets,
             } => match regex.captures(read.seq()) {
                 Some(result) => {
+                    // Check that some of the capture groups and something and, if we were asked for a full match, the regular expression makes it to the end of the sequece
                     if result
                         .iter()
                         .skip(1)
@@ -227,7 +229,7 @@ impl OutputReadHandler {
         self.discard_file.write_record(read).unwrap()
     }
     /// Create a new output handler that writes to the main, discard, and extracted FASTQs
-    fn new(prefix: &Option<String>, read: usize, has_main: bool) -> OutputReadHandler {
+    fn new(prefix: &str, read: usize, has_main: bool) -> OutputReadHandler {
         OutputReadHandler {
             main_file: if has_main {
                 Some(write_fastq(prefix, read, ""))
@@ -399,19 +401,14 @@ fn read_fastq(
 
 /// Create a new gzipped output FASTQ
 fn write_fastq(
-    prefix: &Option<String>,
+    prefix: &str,
     read: usize,
     suffix: &str,
 ) -> bio::io::fastq::Writer<OutputFileWriter> {
-    std::fs::File::create(format!(
-        "{}_R{}{}.fastq.gz",
-        prefix.as_ref().expect("--prefix is required"),
-        read,
-        suffix
-    ))
-    .map(|w| flate2::write::GzEncoder::new(w, flate2::Compression::best()))
-    .map(bio::io::fastq::Writer::new)
-    .unwrap()
+    std::fs::File::create(format!("{}_R{}{}.fastq.gz", prefix, read, suffix))
+        .map(|w| flate2::write::GzEncoder::new(w, flate2::Compression::best()))
+        .map(bio::io::fastq::Writer::new)
+        .unwrap()
 }
 
 /// Write out metrics and counts to JSON files
@@ -434,231 +431,192 @@ fn write_stats(
     .unwrap();
 }
 
-fn main() {
-    let mut data: String = "single".into();
-    let mut full_match = false;
-    let mut inline = false;
-    let mut pattern1 = None;
-    let mut pattern2 = None;
-    let mut prefix = None;
-    let mut read1: Vec<String> = vec![];
-    let mut read2: Vec<String> = vec![];
-    let mut read3: Vec<String> = vec![];
-    let mut separator: String = "_".into();
-    let mut umi_list: Option<String> = None;
-    {
-        let mut parser = argparse::ArgumentParser::new();
-        parser.set_description("A package for extracting Unique Molecular Identifiers (UMIs) from single or paired read sequencing data");
-        parser.refer(&mut read1).add_option(
-            &["--r1_in"],
-            argparse::ParseList,
-            "Path to input FASTQ 1",
-        );
-        parser.refer(&mut read2).add_option(
-            &["--r2_in"],
-            argparse::ParseList,
-            "Path to input FASTQ 2",
-        );
-        parser.refer(&mut read3).add_option(
-            &["--r3_in"],
-            argparse::ParseList,
-            "Path to input FASTQ 3",
-        );
-        parser.refer(&mut pattern1).add_option(
-            &["--pattern1"],
-            argparse::StoreOption,
-            "Barcode string of regex for extracting UMIs in read 1",
-        );
-        parser.refer(&mut pattern2).add_option(
-            &["--pattern2"],
-            argparse::StoreOption,
-            "Barcode string of regex for extracting UMIs in read 2",
-        );
-        parser.refer(&mut inline).add_option(
-            &["--inline"],
-            argparse::StoreTrue,
-            "UMIs inline with reads or not. True if activated",
-        );
-        parser.refer(&mut prefix).add_option(
-            &["--prefix"],
-            argparse::StoreOption,
-            "The prefix for output data files.",
-        );
-        parser.refer(&mut data).add_option(
-            &["--data"],
-            argparse::Store,
-            "Paired or single end sequencing",
-        );
-        parser.refer(&mut separator).add_option(
-            &["--separator"],
-            argparse::Store,
-            "String separating the UMI sequence in the read name",
-        );
-        parser.refer(&mut full_match).add_option(
-            &["--full_match"],
-            argparse::StoreTrue,
-            "Requires the regex pattern to match the entire read sequence. True if activated",
-        );
-        parser.refer(&mut umi_list).add_option(
-            &["--umilist"],
-            argparse::ParseOption,
-            "Path to file with valid UMIs (1st column)",
-        );
-        parser.parse_args_or_exit();
-    }
+#[derive(clap::Clap)]
+#[clap(
+    version = "0.1",
+    author = "Andre Masella <andre.masella@oicr.on.ca>",
+    about = "A package for extracting Unique Molecular Identifiers (UMIs) from single or paired read sequencing data"
+)]
+struct Opts {
+    #[clap(long, about = "Path to file with valid UMIs (1st column)")]
+    umilist: String,
+    #[clap(long, about = "The prefix for output data files.")]
+    prefix: String,
+    #[clap(
+        long,
+        default_value = "_",
+        about = "String separating the UMI sequence in the read name"
+    )]
+    separator: String,
+    #[clap(subcommand)]
+    subcmd: SubCommand,
+}
+#[derive(Clap)]
+enum SubCommand {
+    #[clap(name = "inline")]
+    Inline {
+        #[clap(long, required = true, about = "Path to input FASTQ 1")]
+        r1_in: Vec<String>,
+        #[clap(long, about = "Path to input FASTQ 2")]
+        r2_in: Vec<String>,
+        #[clap(long, about = "Barcode string or regex for extracting UMIs in read 1")]
+        pattern1: String,
+        #[clap(long, about = "Barcode string or regex for extracting UMIs in read 2")]
+        pattern2: Option<String>,
+        #[clap(
+            long,
+            about = "Require the regex to inclreach to the enf the input read."
+        )]
+        full_match: bool,
+    },
+    #[clap(name = "separate")]
+    Separate {
+        #[clap(
+            long,
+            required = true,
+            about = "Path to input FASTQ containing the UMI"
+        )]
+        ru_in: Vec<String>,
+        #[clap(long, required = true, about = "Path to input FASTQ 1")]
+        r1_in: Vec<String>,
+        #[clap(long, about = "Path to input FASTQ 2")]
+        r2_in: Vec<String>,
+    },
+}
 
+fn main() {
+    let args = Opts::parse();
     // Prepopulate the counts dictionary with all the UMIs in the supplied file; we will use these for validation later
     let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let file = std::fs::File::open(
-        umi_list
-            .as_ref()
-            .expect("A list of allowed UMIs must be provided."),
-    )
-    .unwrap();
+    let file = std::fs::File::open(&args.umilist).unwrap();
     for line in std::io::BufReader::new(file).lines() {
         counts.insert(line.unwrap(), 0);
     }
-    let mut metrics = ExtractionMetrics {
-        total: 0,
-        matching: 0,
-        discards: 0,
-        unknown_umi: 0,
-        acceptable_umi_list: &umi_list.as_ref().unwrap(),
-        pattern1: &pattern1,
-        pattern2: &pattern2,
-    };
-
     // Figure out which case we are in, because there are so many
-    std::process::exit(match data.as_str() {
-        "single" => {
-            if !read3.is_empty() {
-                eprintln!("Single ended data requested but R3 files provided.");
-                1
-            } else if inline {
-                if !read2.is_empty() {
-                    eprintln!("Single ended data requested but R2 files provided.");
-                    1
-                } else if pattern2 != None {
-                    eprintln!("Single ended data requested but pattern2 provided.");
-                    1
-                } else {
-                    let pattern = InlineHandler::parse(
-                        &pattern1.as_ref().expect("--pattern1 is required"),
-                        full_match,
-                    )
-                    .expect("Valid pattern1 is required");
-                    for r1 in read1 {
-                        extract_barcodes(
-                            &mut [InputReadHandler::Inline(
-                                read_fastq(&r1).records(),
-                                &pattern,
-                            )],
-                            &mut [OutputReadHandler::new(&prefix, 1, true)],
-                            &separator,
-                            &mut metrics,
-                            &mut counts,
-                        );
-                    }
-                    write_stats(&prefix.unwrap(), &metrics, &mut counts);
-                    0
-                }
-            } else if read1.len() != read2.len() {
-                eprintln!("Mismatched file counts for R1 and R2.");
-                1
-            } else if pattern1 != None || pattern2 != None {
-                eprintln!("Patterns are provided for non-inline UMI.");
-                1
-            } else {
-                for (r1, r2) in read1.iter().zip(read2.iter()) {
+    std::process::exit(match args.subcmd {
+        SubCommand::Inline {
+            r1_in,
+            r2_in,
+            pattern1,
+            pattern2,
+            full_match,
+        } => {
+            let p1 = InlineHandler::parse(&pattern1, full_match).expect("Cannot parse pattern 1");
+            if r2_in.is_empty() {
+                let mut metrics = ExtractionMetrics {
+                    total: 0,
+                    matching: 0,
+                    discards: 0,
+                    unknown_umi: 0,
+                    acceptable_umi_list: &args.umilist,
+                    pattern1: Some(&pattern1),
+                    pattern2: None,
+                };
+                for r1 in r1_in {
                     extract_barcodes(
-                        &mut [
-                            InputReadHandler::SequenceOnly(read_fastq(&r1).records()),
-                            InputReadHandler::UmiOnly(read_fastq(&r2).records()),
-                        ],
-                        &mut [
-                            OutputReadHandler::new(&prefix, 1, true),
-                            OutputReadHandler::new(&prefix, 2, false),
-                        ],
-                        &separator,
+                        &mut [InputReadHandler::Inline(read_fastq(&r1).records(), &p1)],
+                        &mut [OutputReadHandler::new(&args.prefix, 1, true)],
+                        &args.separator,
                         &mut metrics,
                         &mut counts,
                     );
                 }
-                write_stats(&prefix.unwrap(), &metrics, &mut counts);
+                write_stats(&args.prefix, &metrics, &mut counts);
                 0
-            }
-        }
-        "paired" => {
-            if inline {
-                if !read3.is_empty() {
-                    eprintln!("Paired end inline data requested but R3 files provided.");
-                    1
-                } else if read1.len() != read2.len() {
-                    eprintln!("Mismatched file counts for R1 and R2.");
-                    1
-                } else {
-                    let p1 = InlineHandler::parse(
-                        &pattern1.as_ref().expect("--pattern1 is required"),
-                        full_match,
-                    )
-                    .expect("Valid pattern1 is required");
-                    let p2 = InlineHandler::parse(
-                        &pattern2.as_ref().expect("--pattern2 is required"),
-                        full_match,
-                    )
+            } else if r2_in.len() != r1_in.len() {
+                eprintln!("Number of R1 files does not match R2 files.");
+                1
+            } else {
+                let pattern2_str = pattern2.expect("A pattern must be provided.");
+                let p2 = InlineHandler::parse(&pattern2_str, full_match)
                     .expect("Valid pattern2 is required");
-                    for (r1, r2) in read1.iter().zip(read2.iter()) {
-                        extract_barcodes(
-                            &mut [
-                                InputReadHandler::Inline(read_fastq(&r1).records(), &p1),
-                                InputReadHandler::Inline(read_fastq(&r2).records(), &p2),
-                            ],
-                            &mut [
-                                OutputReadHandler::new(&prefix, 1, true),
-                                OutputReadHandler::new(&prefix, 2, true),
-                            ],
-                            &separator,
-                            &mut metrics,
-                            &mut counts,
-                        );
-                    }
-                    write_stats(&prefix.unwrap(), &metrics, &mut counts);
-                    0
-                }
-            } else if read1.len() != read2.len() && read1.len() != read3.len() {
-                eprintln!("Mismatched file counts for R1, R2, and R3.");
-                1
-            } else if pattern1 != None || pattern2 != None {
-                eprintln!("Patterns are provided for non-inline UMI.");
-                1
-            } else {
-                for ((r1, r2), r3) in read1.iter().zip(read2.iter()).zip(read3.iter()) {
+                let mut metrics = ExtractionMetrics {
+                    total: 0,
+                    matching: 0,
+                    discards: 0,
+                    unknown_umi: 0,
+                    acceptable_umi_list: &args.umilist,
+                    pattern1: Some(&pattern1),
+                    pattern2: Some(&pattern2_str),
+                };
+                for (r1, r2) in r1_in.iter().zip(r2_in.iter()) {
                     extract_barcodes(
                         &mut [
-                            InputReadHandler::SequenceOnly(read_fastq(&r1).records()),
-                            InputReadHandler::SequenceOnly(read_fastq(&r2).records()),
-                            InputReadHandler::UmiOnly(read_fastq(&r3).records()),
+                            InputReadHandler::Inline(read_fastq(r1).records(), &p1),
+                            InputReadHandler::Inline(read_fastq(r2).records(), &p2),
                         ],
                         &mut [
-                            OutputReadHandler::new(&prefix, 1, true),
-                            OutputReadHandler::new(&prefix, 2, true),
-                            OutputReadHandler::new(&prefix, 3, false),
+                            OutputReadHandler::new(&args.prefix, 1, true),
+                            OutputReadHandler::new(&args.prefix, 2, true),
                         ],
-                        &separator,
+                        &args.separator,
                         &mut metrics,
                         &mut counts,
                     );
                 }
-                write_stats(&prefix.unwrap(), &metrics, &mut counts);
+                write_stats(&args.prefix, &metrics, &mut counts);
                 0
             }
         }
-        _ => {
-            eprintln!(
-                "Unknown option for --data: {} should be single or pairied",
-                data
-            );
-            1
+        SubCommand::Separate {
+            ru_in,
+            r1_in,
+            r2_in,
+        } => {
+            let mut metrics = ExtractionMetrics {
+                total: 0,
+                matching: 0,
+                discards: 0,
+                unknown_umi: 0,
+                acceptable_umi_list: &args.umilist,
+                pattern1: None,
+                pattern2: None,
+            };
+            if ru_in.len() != r1_in.len() {
+                eprintln!("Mismatched file counts for R1 and UMIs.");
+                1
+            } else if r2_in.is_empty() {
+                for (r1, ru) in r1_in.iter().zip(ru_in.iter()) {
+                    extract_barcodes(
+                        &mut [
+                            InputReadHandler::SequenceOnly(read_fastq(r1).records()),
+                            InputReadHandler::UmiOnly(read_fastq(ru).records()),
+                        ],
+                        &mut [
+                            OutputReadHandler::new(&args.prefix, 1, true),
+                            OutputReadHandler::new(&args.prefix, 2, false),
+                        ],
+                        &args.separator,
+                        &mut metrics,
+                        &mut counts,
+                    );
+                }
+                write_stats(&args.prefix, &metrics, &mut counts);
+                0
+            } else if r2_in.len() != ru_in.len() {
+                eprintln!("Mismatched file counts for R2 and UMIs.");
+                1
+            } else {
+                for ((r1, r2), ru) in r1_in.iter().zip(r2_in.iter()).zip(ru_in.iter()) {
+                    extract_barcodes(
+                        &mut [
+                            InputReadHandler::SequenceOnly(read_fastq(r1).records()),
+                            InputReadHandler::SequenceOnly(read_fastq(r2).records()),
+                            InputReadHandler::UmiOnly(read_fastq(ru).records()),
+                        ],
+                        &mut [
+                            OutputReadHandler::new(&args.prefix, 1, true),
+                            OutputReadHandler::new(&args.prefix, 2, true),
+                            OutputReadHandler::new(&args.prefix, 3, false),
+                        ],
+                        &args.separator,
+                        &mut metrics,
+                        &mut counts,
+                    );
+                }
+                write_stats(&args.prefix, &metrics, &mut counts);
+                0
+            }
         }
     })
 }

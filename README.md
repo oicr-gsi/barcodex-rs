@@ -16,15 +16,15 @@ You can copy the binary to any installation directory you choose.
 
 ## Running
 BarcodEX requires input gzipped FASTQs. It can operate in two modes: the UMIs
-and sequence are mixed in the same file (`--inline`) or the UMIs and sequence
-are in separate files.
+and sequence are mixed in the same file (`inline`) or the UMIs and sequence
+are in separate files (`separate`).
 
-|Scenario                           | Arguments                                                                                                |
-|-----------------------------------|----------------------------------------------------------------------------------------------------------|
-| 1 read with an embedded UMI       | `--data single --inline --pattern1` _pattern_ `--r1_in` _fastq_                                          |
-| 1 data read and 1 UMI read        | `--data single --r1_in` _fastq_ `--r2_in` _fastq_                                                        |
-| 2 reads each with an embedded UMI | `--data paired --inline --pattern1` _pattern_ `--r1_in` _fastq_ `--pattern2` _pattern_ `--r2_in` _fastq_ |
-| 2 data reads and 1 UMI read       | `--data paired --r1_in` _fastq_ `--r2_in` _fastq_ `--r3_in` _fastq_                                      |
+|Scenario                           | Arguments                                                                                |
+|-----------------------------------|------------------------------------------------------------------------------------------|
+| 1 read with an embedded UMI       | `inline --pattern1` _pattern_ `--r1_in` _fastq_                                          |
+| 2 reads each with an embedded UMI | `inline --pattern1` _pattern_ `--r1_in` _fastq_ `--pattern2` _pattern_ `--r2_in` _fastq_ |
+| 1 data read and 1 UMI read        | `separate --r1_in` _fastq_ `--ru_in` _fastq_                                             |
+| 2 data reads and 1 UMI read       | `separate --r1_in` _fastq_ `--r2_in` _fastq_ `--ru_in` _fastq_                           |
 
 In every case `--prefix` must be specified which specifies the start of the
 output files. (_e.g._ `--prefix x` will result in `x_R1.fastq.gz`,
