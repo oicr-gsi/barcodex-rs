@@ -855,7 +855,7 @@ mod tests {
             b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n",
             &InlineHandler::parse("(?P<umi>.{2})(?P<discard>G)", false).unwrap(),
             b"@M00000:0:000000000-00000:1:1:1:1 2:N:0\nAATGG\n+\nBBBBB\n",
-            &InlineHandler::Nucleotide(2, "T".into()),
+            &InlineHandler::parse("NNT", false).unwrap(),
             &mut output1,
             &mut output1_ex,
             &mut output1_discard,
