@@ -72,10 +72,27 @@ enum Output {
 /// Type alias for the output file handler mess
 type OutputFileWriter = flate2::write::GzEncoder<std::fs::File>;
 /// Holder for FASTQ files that are being written to per read
-struct OutputReadHandler {
-    main_file: Option<bio::io::fastq::Writer<OutputFileWriter>>,
-    extracted_file: bio::io::fastq::Writer<OutputFileWriter>,
-    discard_file: bio::io::fastq::Writer<OutputFileWriter>,
+struct OutputReadHandler<W: std::io::Write> {
+    main_file: Option<bio::io::fastq::Writer<W>>,
+    extracted_file: bio::io::fastq::Writer<W>,
+    discard_file: bio::io::fastq::Writer<W>,
+}
+impl<'a> ExtractionMetrics<'a> {
+    fn new(
+        umi_list: &'a str,
+        pattern1: Option<&'a str>,
+        pattern2: Option<&'a str>,
+    ) -> ExtractionMetrics<'a> {
+        ExtractionMetrics {
+            total: 0,
+            matching: 0,
+            discards: 0,
+            unknown_umi: 0,
+            acceptable_umi_list: umi_list,
+            pattern1,
+            pattern2,
+        }
+    }
 }
 impl InlineHandler {
     /// Generates output from an input sequence that will be processed in an appropriate way for the inline extraction method
@@ -88,10 +105,10 @@ impl InlineHandler {
                     Output::Valid {
                         main: (
                             read.seq()[end..read.seq().len()].into(),
-                            read.seq()[end..read.qual().len()].into(),
+                            read.qual()[end..read.qual().len()].into(),
                         ),
                         umi: read.seq()[0..*offset].into(),
-                        extracted: (read.seq()[0..end].into(), read.seq()[0..end].into()),
+                        extracted: (read.seq()[0..end].into(), read.qual()[0..end].into()),
                         input: read,
                     }
                 } else {
@@ -223,22 +240,10 @@ where
         }
     }
 }
-impl OutputReadHandler {
+impl<W: std::io::Write> OutputReadHandler<W> {
     /// Write this whole read to the discard file
     fn discard(self: &mut Self, read: &bio::io::fastq::Record) {
         self.discard_file.write_record(read).unwrap()
-    }
-    /// Create a new output handler that writes to the main, discard, and extracted FASTQs
-    fn new(prefix: &str, read: usize, has_main: bool) -> OutputReadHandler {
-        OutputReadHandler {
-            main_file: if has_main {
-                Some(write_fastq(prefix, read, ""))
-            } else {
-                None
-            },
-            extracted_file: write_fastq(prefix, read, ".extracted"),
-            discard_file: write_fastq(prefix, read, ".discarded"),
-        }
     }
     /// Write this processed read to the main and extracted output files
     fn write(
@@ -288,9 +293,9 @@ impl Output {
     }
 }
 /// Take a bunch of input files and process all the reads
-fn extract_barcodes<R>(
+fn extract_barcodes<R, W: std::io::Write>(
     inputs: &mut [InputReadHandler<R>],
-    outputs: &mut [OutputReadHandler],
+    outputs: &mut [OutputReadHandler<W>],
     separator: &str,
     metrics: &mut ExtractionMetrics,
     counts: &mut std::collections::HashMap<String, usize>,
@@ -386,6 +391,18 @@ fn indices_from_regex(result: &regex::bytes::Captures, target_captures: &[usize]
         .collect();
     indices.sort();
     indices
+}
+/// Create a new output handler that writes to the main, discard, and extracted FASTQs
+fn new_output(prefix: &str, read: usize, has_main: bool) -> OutputReadHandler<OutputFileWriter> {
+    OutputReadHandler {
+        main_file: if has_main {
+            Some(write_fastq(prefix, read, ""))
+        } else {
+            None
+        },
+        extracted_file: write_fastq(prefix, read, ".extracted"),
+        discard_file: write_fastq(prefix, read, ".discarded"),
+    }
 }
 
 /// Read a gzipped FASTQ
@@ -509,19 +526,11 @@ fn main() {
         } => {
             let p1 = InlineHandler::parse(&pattern1, full_match).expect("Cannot parse pattern 1");
             if r2_in.is_empty() {
-                let mut metrics = ExtractionMetrics {
-                    total: 0,
-                    matching: 0,
-                    discards: 0,
-                    unknown_umi: 0,
-                    acceptable_umi_list: &args.umilist,
-                    pattern1: Some(&pattern1),
-                    pattern2: None,
-                };
+                let mut metrics = ExtractionMetrics::new(&args.umilist, Some(&pattern1), None);
                 for r1 in r1_in {
                     extract_barcodes(
                         &mut [InputReadHandler::Inline(read_fastq(&r1).records(), &p1)],
-                        &mut [OutputReadHandler::new(&args.prefix, 1, true)],
+                        &mut [new_output(&args.prefix, 1, true)],
                         &args.separator,
                         &mut metrics,
                         &mut counts,
@@ -536,15 +545,8 @@ fn main() {
                 let pattern2_str = pattern2.expect("A pattern must be provided.");
                 let p2 = InlineHandler::parse(&pattern2_str, full_match)
                     .expect("Valid pattern2 is required");
-                let mut metrics = ExtractionMetrics {
-                    total: 0,
-                    matching: 0,
-                    discards: 0,
-                    unknown_umi: 0,
-                    acceptable_umi_list: &args.umilist,
-                    pattern1: Some(&pattern1),
-                    pattern2: Some(&pattern2_str),
-                };
+                let mut metrics =
+                    ExtractionMetrics::new(&args.umilist, Some(&pattern1), Some(&pattern2_str));
                 for (r1, r2) in r1_in.iter().zip(r2_in.iter()) {
                     extract_barcodes(
                         &mut [
@@ -552,8 +554,8 @@ fn main() {
                             InputReadHandler::Inline(read_fastq(r2).records(), &p2),
                         ],
                         &mut [
-                            OutputReadHandler::new(&args.prefix, 1, true),
-                            OutputReadHandler::new(&args.prefix, 2, true),
+                            new_output(&args.prefix, 1, true),
+                            new_output(&args.prefix, 2, true),
                         ],
                         &args.separator,
                         &mut metrics,
@@ -569,15 +571,7 @@ fn main() {
             r1_in,
             r2_in,
         } => {
-            let mut metrics = ExtractionMetrics {
-                total: 0,
-                matching: 0,
-                discards: 0,
-                unknown_umi: 0,
-                acceptable_umi_list: &args.umilist,
-                pattern1: None,
-                pattern2: None,
-            };
+            let mut metrics = ExtractionMetrics::new(&args.umilist, None, None);
             if ru_in.len() != r1_in.len() {
                 eprintln!("Mismatched file counts for R1 and UMIs.");
                 1
@@ -589,8 +583,8 @@ fn main() {
                             InputReadHandler::UmiOnly(read_fastq(ru).records()),
                         ],
                         &mut [
-                            OutputReadHandler::new(&args.prefix, 1, true),
-                            OutputReadHandler::new(&args.prefix, 2, false),
+                            new_output(&args.prefix, 1, true),
+                            new_output(&args.prefix, 2, false),
                         ],
                         &args.separator,
                         &mut metrics,
@@ -611,9 +605,9 @@ fn main() {
                             InputReadHandler::UmiOnly(read_fastq(ru).records()),
                         ],
                         &mut [
-                            OutputReadHandler::new(&args.prefix, 1, true),
-                            OutputReadHandler::new(&args.prefix, 2, true),
-                            OutputReadHandler::new(&args.prefix, 3, false),
+                            new_output(&args.prefix, 1, true),
+                            new_output(&args.prefix, 2, true),
+                            new_output(&args.prefix, 3, false),
                         ],
                         &args.separator,
                         &mut metrics,
@@ -625,4 +619,307 @@ fn main() {
             }
         }
     })
+}
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+    fn extract_separate<W: std::io::Write>(
+        read1: &[u8],
+        read2: &[u8],
+        output1: &mut W,
+        output1_ex: &mut W,
+        output1_discard: &mut W,
+        output2_ex: &mut W,
+        output2_discard: &mut W,
+        counts: &mut std::collections::HashMap<String, usize>,
+    ) -> ExtractionMetrics<'static> {
+        let mut metrics = ExtractionMetrics::new("/tmp/test", None, None);
+        extract_barcodes(
+            &mut [
+                InputReadHandler::SequenceOnly(
+                    bio::io::fastq::Reader::new(std::io::Cursor::new(read1)).records(),
+                ),
+                InputReadHandler::UmiOnly(
+                    bio::io::fastq::Reader::new(std::io::Cursor::new(read2)).records(),
+                ),
+            ],
+            &mut [
+                OutputReadHandler {
+                    main_file: Some(bio::io::fastq::Writer::new(output1)),
+                    extracted_file: bio::io::fastq::Writer::new(output1_ex),
+                    discard_file: bio::io::fastq::Writer::new(output1_discard),
+                },
+                OutputReadHandler {
+                    main_file: None,
+                    extracted_file: bio::io::fastq::Writer::new(output2_ex),
+                    discard_file: bio::io::fastq::Writer::new(output2_discard),
+                },
+            ],
+            ":",
+            &mut metrics,
+            counts,
+        );
+        metrics
+    }
+    fn extract_inline<W: std::io::Write>(
+        read1: &[u8],
+        handler1: &InlineHandler,
+        read2: &[u8],
+        handler2: &InlineHandler,
+        output1: &mut W,
+        output1_ex: &mut W,
+        output1_discard: &mut W,
+        output2: &mut W,
+        output2_ex: &mut W,
+        output2_discard: &mut W,
+        counts: &mut std::collections::HashMap<String, usize>,
+    ) -> ExtractionMetrics<'static> {
+        let mut metrics = ExtractionMetrics::new("/tmp/test", None, None);
+        extract_barcodes(
+            &mut [
+                InputReadHandler::Inline(
+                    bio::io::fastq::Reader::new(std::io::Cursor::new(read1)).records(),
+                    handler1,
+                ),
+                InputReadHandler::Inline(
+                    bio::io::fastq::Reader::new(std::io::Cursor::new(read2)).records(),
+                    handler2,
+                ),
+            ],
+            &mut [
+                OutputReadHandler {
+                    main_file: Some(bio::io::fastq::Writer::new(output1)),
+                    extracted_file: bio::io::fastq::Writer::new(output1_ex),
+                    discard_file: bio::io::fastq::Writer::new(output1_discard),
+                },
+                OutputReadHandler {
+                    main_file: Some(bio::io::fastq::Writer::new(output2)),
+                    extracted_file: bio::io::fastq::Writer::new(output2_ex),
+                    discard_file: bio::io::fastq::Writer::new(output2_discard),
+                },
+            ],
+            ":",
+            &mut metrics,
+            counts,
+        );
+        metrics
+    }
+
+    #[test]
+    fn test_s0() {
+        let mut output1 = Vec::new();
+        let mut output1_ex = Vec::new();
+        let mut output1_discard = Vec::new();
+        let mut output2_ex = Vec::new();
+        let mut output2_discard = Vec::new();
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("AAA".into(), 0);
+        let results = extract_separate(
+            b"",
+            b"",
+            &mut output1,
+            &mut output1_ex,
+            &mut output1_discard,
+            &mut output2_ex,
+            &mut output2_discard,
+            &mut counts,
+        );
+        assert_eq!(results.total, 0);
+        assert_eq!(results.discards, 0);
+        assert_eq!(results.matching, 0);
+        assert_eq!(results.unknown_umi, 0);
+        assert_eq!(&output1, b"");
+        assert_eq!(&output1_ex, b"");
+        assert_eq!(&output1_discard, b"");
+        assert_eq!(&output2_ex, b"");
+        assert_eq!(&output2_discard, b"");
+    }
+
+    #[test]
+    fn test_s1() {
+        let mut output1 = Vec::new();
+        let mut output1_ex = Vec::new();
+        let mut output1_discard = Vec::new();
+        let mut output2_ex = Vec::new();
+        let mut output2_discard = Vec::new();
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("AAA".into(), 0);
+        let results = extract_separate(
+            b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n",
+            b"@M00000:0:000000000-00000:1:1:1:1 2:N:0\nAAA\n+\nBBB\n",
+            &mut output1,
+            &mut output1_ex,
+            &mut output1_discard,
+            &mut output2_ex,
+            &mut output2_discard,
+            &mut counts,
+        );
+        assert_eq!(results.total, 1);
+        assert_eq!(results.discards, 0);
+        assert_eq!(results.matching, 1);
+        assert_eq!(results.unknown_umi, 0);
+        println!("{}", std::str::from_utf8(&output1).unwrap());
+        println!("{}", std::str::from_utf8(&output2_ex).unwrap());
+        assert!(output1
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AAA 1:N:0\nACGTACGT\n+\nBBBBBBBB\n".iter()));
+        assert!(output1_ex
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AAA 1:N:0\n\n+\n\n".iter()));
+        assert_eq!(&output1_discard, b"");
+        assert!(output2_ex
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AAA 2:N:0\nAAA\n+\nBBB\n".iter()));
+        assert_eq!(&output2_discard, b"");
+    }
+    #[test]
+    fn test_s2() {
+        let mut output1 = Vec::new();
+        let mut output1_ex = Vec::new();
+        let mut output1_discard = Vec::new();
+        let mut output2_ex = Vec::new();
+        let mut output2_discard = Vec::new();
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("TTT".into(), 0);
+        let results = extract_separate(
+            b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n",
+            b"@M00000:0:000000000-00000:1:1:1:1 2:N:0\nAAA\n+\nBBB\n",
+            &mut output1,
+            &mut output1_ex,
+            &mut output1_discard,
+            &mut output2_ex,
+            &mut output2_discard,
+            &mut counts,
+        );
+        assert_eq!(results.total, 1);
+        assert_eq!(results.discards, 0);
+        assert_eq!(results.matching, 0);
+        assert_eq!(results.unknown_umi, 1);
+        assert_eq!(&output1, b"");
+        assert_eq!(&output1_ex, b"");
+        assert!(output1_discard
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n".iter()));
+        assert_eq!(&output2_ex, b"");
+        assert!(output2_discard
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1 2:N:0\nAAA\n+\nBBB\n".iter()));
+    }
+    #[test]
+    fn test_i0() {
+        let mut output1 = Vec::new();
+        let mut output1_ex = Vec::new();
+        let mut output1_discard = Vec::new();
+        let mut output2 = Vec::new();
+        let mut output2_ex = Vec::new();
+        let mut output2_discard = Vec::new();
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("AAA".into(), 0);
+        let results = extract_inline(
+            b"",
+            &InlineHandler::Nucleotide(2, "A".into()),
+            b"",
+            &InlineHandler::Nucleotide(2, "T".into()),
+            &mut output1,
+            &mut output1_ex,
+            &mut output1_discard,
+            &mut output2,
+            &mut output2_ex,
+            &mut output2_discard,
+            &mut counts,
+        );
+        assert_eq!(results.total, 0);
+        assert_eq!(results.discards, 0);
+        assert_eq!(results.matching, 0);
+        assert_eq!(results.unknown_umi, 0);
+        assert_eq!(&output1, b"");
+        assert_eq!(&output1_ex, b"");
+        assert_eq!(&output1_discard, b"");
+        assert_eq!(&output2, b"");
+        assert_eq!(&output2_ex, b"");
+        assert_eq!(&output2_discard, b"");
+    }
+
+    #[test]
+    fn test_i1() {
+        let mut output1 = Vec::new();
+        let mut output1_ex = Vec::new();
+        let mut output1_discard = Vec::new();
+        let mut output2 = Vec::new();
+        let mut output2_ex = Vec::new();
+        let mut output2_discard = Vec::new();
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("AC-AA".into(), 0);
+        let results = extract_inline(
+            b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n",
+            &InlineHandler::parse("(?P<umi>.{2})(?P<discard>G)", false).unwrap(),
+            b"@M00000:0:000000000-00000:1:1:1:1 2:N:0\nAATGG\n+\nBBBBB\n",
+            &InlineHandler::Nucleotide(2, "T".into()),
+            &mut output1,
+            &mut output1_ex,
+            &mut output1_discard,
+            &mut output2,
+            &mut output2_ex,
+            &mut output2_discard,
+            &mut counts,
+        );
+        assert_eq!(results.total, 1);
+        assert_eq!(results.discards, 0);
+        assert_eq!(results.matching, 1);
+        assert_eq!(results.unknown_umi, 0);
+        println!("{}", std::str::from_utf8(&output1).unwrap());
+        println!("{}", std::str::from_utf8(&output2_ex).unwrap());
+        assert!(output1
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 1:N:0\nTACGT\n+\nBBBBB\n".iter()));
+        assert!(output1_ex
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 1:N:0\nACG\n+\nBBB\n".iter()));
+        assert_eq!(&output1_discard, b"");
+        assert!(output2
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 2:N:0\nGG\n+\nBB\n".iter()));
+        assert!(output2_ex
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 2:N:0\nAAT\n+\nBBB\n".iter()));
+        assert_eq!(&output2_discard, b"");
+    }
+    #[test]
+    fn test_i2() {
+        let mut output1 = Vec::new();
+        let mut output1_ex = Vec::new();
+        let mut output1_discard = Vec::new();
+        let mut output2 = Vec::new();
+        let mut output2_ex = Vec::new();
+        let mut output2_discard = Vec::new();
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("TT".into(), 0);
+        let results = extract_inline(
+            b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n",
+            &InlineHandler::Nucleotide(2, "A".into()),
+            b"@M00000:0:000000000-00000:1:1:1:1 2:N:0\nAATGG\n+\nBBBBB\n",
+            &InlineHandler::Nucleotide(2, "T".into()),
+            &mut output1,
+            &mut output1_ex,
+            &mut output1_discard,
+            &mut output2,
+            &mut output2_ex,
+            &mut output2_discard,
+            &mut counts,
+        );
+        assert_eq!(results.total, 1);
+        assert_eq!(results.discards, 1);
+        assert_eq!(results.matching, 0);
+        assert_eq!(results.unknown_umi, 0);
+        assert_eq!(&output1, b"");
+        assert_eq!(&output1_ex, b"");
+        assert!(output1_discard
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n".iter()));
+        assert_eq!(&output2_ex, b"");
+        assert!(output2_discard
+            .iter()
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1 2:N:0\nAATGG\n+\nBBBBB\n".iter()));
+    }
 }
