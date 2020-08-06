@@ -507,14 +507,53 @@ enum SubCommand {
     },
 }
 
+/// Extract allowed UMIs from a file for single-UMI situations
+///
+/// We're only expecting one UMI, so take lines that looke like `NNNN` or `NNNN 1` or `NNNN 1 2`
+fn read_umi_list_single(umilist: &str) -> std::collections::HashMap<String, usize> {
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let file = std::fs::File::open(umilist).unwrap();
+    for line in std::io::BufReader::new(file).lines() {
+        let l = line.unwrap();
+        if l.split_whitespace().count() == 1 || l.split_whitespace().skip(1).any(|c| c == "1") {
+            counts.insert(l.split_whitespace().next().unwrap().into(), 0);
+        }
+    }
+    counts
+}
+
+/// Extract allowed UMIs for dual-UMI situations
+///
+/// We're expecting two UMIs, so treat `NNNN 1` as UMIs for read 1, `NNNN 2` as UMIs for read 2, and `NNNN` or `NNNN 1 2` as UMIs for both reads
+fn read_umi_list_paired(umilist: &str) -> std::collections::HashMap<String, usize> {
+    let mut umi1 = Vec::new();
+    let mut umi2 = Vec::new();
+    let file = std::fs::File::open(umilist).unwrap();
+    for line in std::io::BufReader::new(file).lines() {
+        let l = line.unwrap();
+        if l.split_whitespace().count() == 1 {
+            let sequence = l.split_whitespace().next().unwrap();
+            umi1.push(sequence.to_string());
+            umi2.push(sequence.to_string());
+        }
+        if l.split_whitespace().skip(1).any(|c| c == "1") {
+            umi1.push(l.split_whitespace().next().unwrap().to_string());
+        }
+        if l.split_whitespace().skip(1).any(|c| c == "2") {
+            umi2.push(l.split_whitespace().next().unwrap().to_string());
+        }
+    }
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for u1 in &umi1 {
+        for u2 in &umi2 {
+            counts.insert(format!("{}-{}", u1, u2), 0);
+        }
+    }
+    counts
+}
+
 fn main() {
     let args = Opts::parse();
-    // Prepopulate the counts dictionary with all the UMIs in the supplied file; we will use these for validation later
-    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let file = std::fs::File::open(&args.umilist).unwrap();
-    for line in std::io::BufReader::new(file).lines() {
-        counts.insert(line.unwrap(), 0);
-    }
     // Figure out which case we are in, because there are so many
     std::process::exit(match args.subcmd {
         SubCommand::Inline {
@@ -526,6 +565,8 @@ fn main() {
         } => {
             let p1 = InlineHandler::parse(&pattern1, full_match).expect("Cannot parse pattern 1");
             if r2_in.is_empty() {
+                // Prepopulate the counts dictionary with all the UMIs in the supplied file; we will use these for validation later
+                let mut counts = read_umi_list_single(&args.umilist);
                 let mut metrics = ExtractionMetrics::new(&args.umilist, Some(&pattern1), None);
                 for r1 in r1_in {
                     extract_barcodes(
@@ -542,6 +583,8 @@ fn main() {
                 eprintln!("Number of R1 files does not match R2 files.");
                 1
             } else {
+                // Prepopulate the counts dictionary with all the UMIs in the supplied file; we will use these for validation later
+                let mut counts = read_umi_list_paired(&args.umilist);
                 let pattern2_str = pattern2.expect("A pattern must be provided.");
                 let p2 = InlineHandler::parse(&pattern2_str, full_match)
                     .expect("Valid pattern2 is required");
@@ -571,6 +614,8 @@ fn main() {
             r1_in,
             r2_in,
         } => {
+            // Prepopulate the counts dictionary with all the UMIs in the supplied file; we will use these for validation later
+            let mut counts = read_umi_list_single(&args.umilist);
             let mut metrics = ExtractionMetrics::new(&args.umilist, None, None);
             if ru_in.len() != r1_in.len() {
                 eprintln!("Mismatched file counts for R1 and UMIs.");
