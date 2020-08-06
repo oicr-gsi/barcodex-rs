@@ -33,9 +33,11 @@ output files. (_e.g._ `--prefix x` will result in `x_R1.fastq.gz`,
 
 The UMIs will only be accepted if they match an allow list provided with
 `--umilist`. The list is a text file with one UMI per line. In the case of 2
-reads with embedded UMIs, the two parts of the UMI must be separated by a `-`
-(_e.g._, if the UMI on read 1 is `AAA` and the UMI on read 2 is `CCC`, then
-`AAA-CCC` should be in the allow list)
+reads with embedded UMIs, the two parts of the UMI must be on separate lines,
+optionally followed by the read number they apply to. So, `AAA` would be
+allowed for either read 1 or read 2, while `CCC 2` will allow `CCC` only on
+read 2.  It's also possible to write `AAA 1 2` or `AAA 1` and `AAA 2` if
+desired.
 
 The UMI will be placed in the header of the output file, separated by
 `--separator` or `_` if unspecified.
