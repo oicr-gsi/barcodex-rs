@@ -1,6 +1,6 @@
 [package]
 name = "barcodex-rs"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Andre Masella <andre.masella@oicr.on.ca>"]
 edition = "2018"
 
