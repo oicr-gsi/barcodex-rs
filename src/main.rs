@@ -349,7 +349,7 @@ fn extract_barcodes<R, W: std::io::Write>(
                 })
                 .filter(|u| !u.is_empty())
                 .collect::<Vec<&[u8]>>()
-                .join(&b'-');
+                .join(&b'.');
             let umi_str: String = std::str::from_utf8(&umi).unwrap().into();
             // If our counts hashmap has this UMI, then increment it and output the modified read
             match counts.get_mut(&umi_str) {
@@ -546,7 +546,7 @@ fn read_umi_list_paired(umilist: &str) -> std::collections::HashMap<String, usiz
     let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for u1 in &umi1 {
         for u2 in &umi2 {
-            counts.insert(format!("{}-{}", u1, u2), 0);
+            counts.insert(format!("{}.{}", u1, u2), 0);
         }
     }
     counts
@@ -895,7 +895,7 @@ mod tests {
         let mut output2_ex = Vec::new();
         let mut output2_discard = Vec::new();
         let mut counts = std::collections::HashMap::new();
-        counts.insert("AC-AA".into(), 0);
+        counts.insert("AC.AA".into(), 0);
         let results = extract_inline(
             b"@M00000:0:000000000-00000:1:1:1:1 1:N:0\nACGTACGT\n+\nBBBBBBBB\n",
             &InlineHandler::parse("(?P<umi>.{2})(?P<discard>G)", false).unwrap(),
@@ -917,17 +917,17 @@ mod tests {
         println!("{}", std::str::from_utf8(&output2_ex).unwrap());
         assert!(output1
             .iter()
-            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 1:N:0\nTACGT\n+\nBBBBB\n".iter()));
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC.AA 1:N:0\nTACGT\n+\nBBBBB\n".iter()));
         assert!(output1_ex
             .iter()
-            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 1:N:0\nACG\n+\nBBB\n".iter()));
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC.AA 1:N:0\nACG\n+\nBBB\n".iter()));
         assert_eq!(&output1_discard, b"");
         assert!(output2
             .iter()
-            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 2:N:0\nGG\n+\nBB\n".iter()));
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC.AA 2:N:0\nGG\n+\nBB\n".iter()));
         assert!(output2_ex
             .iter()
-            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC-AA 2:N:0\nAAT\n+\nBBB\n".iter()));
+            .eq(b"@M00000:0:000000000-00000:1:1:1:1:AC.AA 2:N:0\nAAT\n+\nBBB\n".iter()));
         assert_eq!(&output2_discard, b"");
     }
     #[test]
