@@ -1,5 +1,5 @@
 use bio_types::sequence::SequenceRead;
-use clap::Clap;
+use clap::Parser;
 use std::io::BufRead;
 
 lazy_static::lazy_static! {
@@ -448,7 +448,7 @@ fn write_stats(
     .unwrap();
 }
 
-#[derive(clap::Clap)]
+#[derive(Parser, Debug)]
 #[clap(
     version = "0.1",
     author = "Andre Masella <andre.masella@oicr.on.ca>",
@@ -461,7 +461,7 @@ struct Opts {
     prefix: String,
     #[clap(
         long,
-        default_value = "_",
+        default_value = ":",
         about = "String separating the UMI sequence in the read name"
     )]
     separator: String,
