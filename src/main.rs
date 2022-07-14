@@ -1,4 +1,3 @@
-use bio_types::sequence::SequenceRead;
 use clap::Parser;
 use std::io::BufRead;
 
@@ -274,14 +273,14 @@ impl Output {
     ///
     /// Panics if there was no input
     fn name(self: &Self) -> &[u8] {
-        self.read().name()
+        self.read().id().as_bytes()
     }
     /// Get the input sequence associated which generated this output.
     ///
     /// Panics if there was no input
     fn read(self: &Self) -> &bio::io::fastq::Record {
         match self {
-            Output::Empty => panic!("Trying to get seqeuence of empty record."),
+            Output::Empty => panic!("Trying to get sequence of empty record."),
             Output::Discard(record) => record,
             Output::Valid {
                 input,
@@ -494,11 +493,7 @@ enum SubCommand {
         help = "Extract UMIs where the UMI is in a separate read."
     )]
     Separate {
-        #[clap(
-            long,
-            required = true,
-            help = "Path to input FASTQ containing the UMI"
-        )]
+        #[clap(long, required = true, help = "Path to input FASTQ containing the UMI")]
         ru_in: Vec<String>,
         #[clap(long, required = true, help = "Path to input FASTQ 1")]
         r1_in: Vec<String>,
