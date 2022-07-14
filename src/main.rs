@@ -451,7 +451,7 @@ fn write_stats(
 #[clap(
     version = "0.1",
     author = "Andre Masella <andre.masella@oicr.on.ca>",
-    help = "A package for extracting Unique Molecular Identifiers (UMIs) from single or paired read sequencing data"
+    //help = "A package for extracting Unique Molecular Identifiers (UMIs) from single or paired read sequencing data"
 )]
 struct Opts {
     #[clap(long, help = "Path to file with valid UMIs (1st column)")]
@@ -471,7 +471,7 @@ struct Opts {
 enum SubCommand {
     #[clap(
         name = "inline",
-        help = "Extract UMIs where the UMI is mixed with the sequence."
+        //help = "Extract UMIs where the UMI is mixed with the sequence."
     )]
     Inline {
         #[clap(long, required = true, help = "Path to input FASTQ 1")]
@@ -490,7 +490,7 @@ enum SubCommand {
     },
     #[clap(
         name = "separate",
-        help = "Extract UMIs where the UMI is in a separate read."
+        //help = "Extract UMIs where the UMI is in a separate read."
     )]
     Separate {
         #[clap(long, required = true, help = "Path to input FASTQ containing the UMI")]
@@ -549,6 +549,7 @@ fn read_umi_list_paired(umilist: &str) -> std::collections::HashMap<String, usiz
 
 fn main() {
     let args = Opts::parse();
+
     // Figure out which case we are in, because there are so many
     std::process::exit(match args.subcmd {
         SubCommand::Inline {
